@@ -1,7 +1,7 @@
 # vaultstream
 
 [![npm version](https://img.shields.io/npm/v/vaultstream.svg)](https://www.npmjs.com/package/vaultstream)
-[![CI](https://github.com/vaultstream/vaultstream/actions/workflows/ci.yml/badge.svg)](https://github.com/vaultstream/vaultstream/actions/workflows/ci.yml)
+[![CI](https://github.com/EhtishamHafeez/vaultstream/actions/workflows/ci.yml/badge.svg)](https://github.com/EhtishamHafeez/vaultstream/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
 **Back up your entire Supabase project — database AND storage files — to storage you control.**
@@ -271,7 +271,7 @@ streams. A 50 GB database and a 500 MB one use the same amount of RAM.
 ## Development
 
 ```bash
-git clone https://github.com/vaultstream/vaultstream.git
+git clone https://github.com/EhtishamHafeez/vaultstream.git
 cd vaultstream
 npm install
 npm run build

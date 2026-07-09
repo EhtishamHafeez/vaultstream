@@ -1,17 +1,17 @@
 {
   "name": "vaultstream",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Back up your entire Supabase project — database AND storage files — to storage you control.",
   "type": "module",
   "license": "MIT",
   "author": "Vaultstream",
-  "homepage": "https://github.com/vaultstream/vaultstream#readme",
+  "homepage": "https://github.com/EhtishamHafeez/vaultstream#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/vaultstream/vaultstream.git"
+    "url": "git+https://github.com/EhtishamHafeez/vaultstream.git"
   },
   "bugs": {
-    "url": "https://github.com/vaultstream/vaultstream/issues"
+    "url": "https://github.com/EhtishamHafeez/vaultstream/issues"
   },
   "keywords": [
     "supabase",
