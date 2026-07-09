@@ -21,7 +21,17 @@ export interface VaultstreamFileConfig {
   destination: DestinationFileConfig;
   storage?: { enabled: boolean };
   encryption?: { enabled: boolean };
+  /** Schemas to pass to pg_dump via -n. Defaults to DEFAULT_SCHEMAS. */
+  schemas?: string[];
 }
+
+/**
+ * Supabase's internal schemas (notably "realtime", with its daily message
+ * partition tables) aren't readable by the read-only backup role and don't
+ * contain user data — so we never dump the whole database by default, only
+ * these three.
+ */
+export const DEFAULT_SCHEMAS = ["public", "auth", "storage"];
 
 export const CONFIG_FILENAME = "vaultstream.json";
 
@@ -69,11 +79,13 @@ export interface ResolvedConfig {
   destination: Destination;
   encryptionKey?: Buffer;
   storageEnabled: boolean;
+  schemas: string[];
 }
 
 export interface ResolveConfigOptions {
   fileConfig: VaultstreamFileConfig | null;
   destFlag?: string;
+  schemasFlag?: string;
   env?: NodeJS.ProcessEnv;
 }
 
@@ -82,8 +94,12 @@ export interface ResolveConfigOptions {
  * into a single resolved config. A config file is never required — every
  * command must work from env vars + flags alone for CI/cron use.
  */
-export function resolveConfig({ fileConfig, destFlag, env = process.env }: ResolveConfigOptions): ResolvedConfig {
+export function resolveConfig({ fileConfig, destFlag, schemasFlag, env = process.env }: ResolveConfigOptions): ResolvedConfig {
   const destination = resolveDestination({ fileConfig, destFlag, env });
+
+  const schemas = schemasFlag
+    ? schemasFlag.split(",").map((s) => s.trim()).filter(Boolean)
+    : (fileConfig?.schemas?.length ? fileConfig.schemas : DEFAULT_SCHEMAS);
 
   const encryptionKeyHex = env.VAULTSTREAM_ENCRYPTION_KEY;
   let encryptionKey: Buffer | undefined;
@@ -105,6 +121,7 @@ export function resolveConfig({ fileConfig, destFlag, env = process.env }: Resol
     destination,
     encryptionKey,
     storageEnabled: fileConfig?.storage?.enabled ?? Boolean(env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY),
+    schemas,
   };
 }
 

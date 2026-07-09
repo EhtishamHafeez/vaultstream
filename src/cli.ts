@@ -27,6 +27,11 @@ program
   .option("--db-only", "Only back up the database")
   .option("--storage-only", "Only back up storage files")
   .option("--dest <path|s3>", 'Destination: a local directory path, or "s3" (configured via env vars)')
+  .option(
+    "--schemas <list>",
+    'Comma-separated schemas to dump (default: "public,auth,storage"). ' +
+      "Supabase's internal schemas (e.g. realtime) aren't readable by the backup role and are excluded by default."
+  )
   .option("--dry-run", "Show what would happen without writing or uploading anything")
   .option("--json", "Print machine-readable JSON output instead of pretty text")
   .option("--no-version-check", "Skip the pg_dump/server version compatibility check")
@@ -36,6 +41,7 @@ program
         dbOnly: options.dbOnly,
         storageOnly: options.storageOnly,
         dest: options.dest,
+        schemas: options.schemas,
         dryRun: options.dryRun,
         json: options.json,
         noVersionCheck: options.versionCheck === false,
@@ -70,6 +76,7 @@ interface BackupCliOptions {
   dbOnly?: boolean;
   storageOnly?: boolean;
   dest?: string;
+  schemas?: string;
   dryRun?: boolean;
   json?: boolean;
   versionCheck?: boolean;

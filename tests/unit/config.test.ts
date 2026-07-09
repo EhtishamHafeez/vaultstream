@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveConfig } from "../../src/lib/config.js";
+import { DEFAULT_SCHEMAS, resolveConfig } from "../../src/lib/config.js";
 import { ConfigError } from "../../src/lib/errors.js";
 
 describe("resolveConfig", () => {
@@ -87,5 +87,31 @@ describe("resolveConfig", () => {
       env: { SUPABASE_URL: "https://x.supabase.co", SUPABASE_SERVICE_ROLE_KEY: "key" },
     });
     expect(config.storageEnabled).toBe(true);
+  });
+
+  it("defaults schemas to public,auth,storage when nothing overrides it", () => {
+    const config = resolveConfig({ fileConfig: null, destFlag: "./backups", env: {} });
+    expect(config.schemas).toEqual(DEFAULT_SCHEMAS);
+    expect(config.schemas).toEqual(["public", "auth", "storage"]);
+  });
+
+  it("uses schemas from vaultstream.json when present", () => {
+    const config = resolveConfig({
+      fileConfig: {
+        destination: { type: "local", path: "./backups" },
+        schemas: ["public", "custom_schema"],
+      },
+      env: {},
+    });
+    expect(config.schemas).toEqual(["public", "custom_schema"]);
+  });
+
+  it("--schemas flag overrides both the config file and the default", () => {
+    const config = resolveConfig({
+      fileConfig: { destination: { type: "local", path: "./backups" }, schemas: ["public"] },
+      schemasFlag: "public, auth , storage",
+      env: {},
+    });
+    expect(config.schemas).toEqual(["public", "auth", "storage"]);
   });
 });

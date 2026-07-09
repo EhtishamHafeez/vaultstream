@@ -83,6 +83,7 @@ vaultstream backup --db-only            # skip storage files
 vaultstream backup --storage-only       # skip the database
 vaultstream backup --dest ./backups     # override the destination for this run
 vaultstream backup --dest s3            # use the S3-compatible destination from env vars
+vaultstream backup --schemas public,auth,storage,custom_schema  # override which schemas pg_dump covers
 vaultstream backup --dry-run            # show what would happen, write nothing
 vaultstream backup --json               # machine-readable output for scripts/monitoring
 ```
@@ -90,10 +91,17 @@ vaultstream backup --json               # machine-readable output for scripts/mo
 Sample output:
 
 ```
-✓ pg_dump streamed to s3://my-bucket/db/backup-2026-07-09T14-00-00.000Z.dump.gz.enc (48 MB, 38s)
+✓ pg_dump streamed to s3://my-bucket/db/backup-2026-07-09T14-00-00.000Z.dump.gz.enc (48 MB, 38s, schemas: public, auth, storage)
 ✓ 1,204 storage files synced (12 new, 3 updated) in 22s
 ✓ manifest written — 42 tables, sha256 verified
 ```
+
+By default, `pg_dump` only covers the `public`, `auth`, and `storage` schemas —
+**never the whole database.** Supabase's other internal schemas (notably `realtime`,
+which has its own daily message-partition tables) aren't readable by the read-only
+backup role and hold no application data anyway. See
+[Troubleshooting](#troubleshooting) if you hit a permission error, or the `schemas`
+option below if you need to include an additional schema of your own.
 
 ### `vaultstream restore <backup-id>`
 
@@ -125,9 +133,14 @@ count, storage file count — newest first.
 {
   "destination": { "type": "local", "path": "./vaultstream-backups" },
   "storage": { "enabled": true },
-  "encryption": { "enabled": true }
+  "encryption": { "enabled": true },
+  "schemas": ["public", "auth", "storage"]
 }
 ```
+
+`schemas` controls which schemas `pg_dump` covers (`-n <schema>` per entry) and
+defaults to `["public", "auth", "storage"]` if omitted. The `--schemas` flag
+overrides both the config file and the default for a single run.
 
 Everything else comes from environment variables, so every command also works with
 **no config file at all** — just env vars — for CI and cron use:
@@ -219,11 +232,37 @@ CREATE ROLE vaultstream_backup WITH LOGIN PASSWORD 'REPLACE_WITH_A_STRONG_PASSWO
 
 GRANT USAGE ON SCHEMA public TO vaultstream_backup;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO vaultstream_backup;
+GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO vaultstream_backup;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
   GRANT SELECT ON TABLES TO vaultstream_backup;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT SELECT ON SEQUENCES TO vaultstream_backup;
 
--- Repeat the three GRANT/ALTER lines above for any other schema you use
--- (e.g. "auth", "storage") if you want them included in the backup.
+GRANT USAGE ON SCHEMA auth TO vaultstream_backup;
+GRANT SELECT ON ALL TABLES IN SCHEMA auth TO vaultstream_backup;
+GRANT SELECT ON ALL SEQUENCES IN SCHEMA auth TO vaultstream_backup;
+ALTER DEFAULT PRIVILEGES IN SCHEMA auth
+  GRANT SELECT ON TABLES TO vaultstream_backup;
+ALTER DEFAULT PRIVILEGES IN SCHEMA auth
+  GRANT SELECT ON SEQUENCES TO vaultstream_backup;
+
+GRANT USAGE ON SCHEMA storage TO vaultstream_backup;
+GRANT SELECT ON ALL TABLES IN SCHEMA storage TO vaultstream_backup;
+GRANT SELECT ON ALL SEQUENCES IN SCHEMA storage TO vaultstream_backup;
+ALTER DEFAULT PRIVILEGES IN SCHEMA storage
+  GRANT SELECT ON TABLES TO vaultstream_backup;
+ALTER DEFAULT PRIVILEGES IN SCHEMA storage
+  GRANT SELECT ON SEQUENCES TO vaultstream_backup;
+
+-- pg_dump reads sequence state (last_value/is_called) for every serial /
+-- identity column, so SELECT ON SEQUENCES is required alongside SELECT ON
+-- TABLES — omitting it fails with "permission denied for sequence ...".
+
+-- vaultstream dumps only public, auth, and storage by default (see the
+-- "schemas" config option to add more). Don't bother granting access to
+-- Supabase's other internal schemas like "realtime" — their tables belong to
+-- extensions that stay locked down regardless of GRANT, and they hold no
+-- application data anyway.
 ```
 
 What `vaultstream` can and cannot do with these credentials:
@@ -251,6 +290,40 @@ theoretically prevented) before it ever leaves your machine, streamed through No
 native `crypto` module. The key never leaves your environment; `vaultstream` does not
 transmit it anywhere. **Losing the key means losing the ability to decrypt that
 backup — there is no recovery mechanism, by design.**
+
+## Troubleshooting
+
+### `permission denied for schema auth` / `... for schema realtime` / etc.
+
+`pg_dump` only requests the schemas listed in `schemas` (default `public`, `auth`,
+`storage`) — but the read-only role still needs an explicit `GRANT` on each one. Two
+possible fixes:
+
+- **You added a schema to `schemas`/`--schemas` that the role hasn't been granted on
+  yet.** Run the three `GRANT`/`ALTER DEFAULT PRIVILEGES` lines for that schema (see
+  [Security](#security) above) with your role name.
+- **The error mentions `realtime` (or another schema you didn't ask for).** You're
+  likely running a pre-0.1.3 version, or have `schemas` configured to include it
+  explicitly. `realtime`'s tables belong to an extension and aren't SELECT-able by a
+  restricted role no matter what you grant — remove it from `schemas` and let the
+  default (`public,auth,storage`) apply instead.
+
+### `permission denied for sequence ..._id_seq`
+
+`pg_dump` reads sequence state (`last_value`/`is_called`) for every `serial` or
+`identity` column — granting `SELECT` on tables isn't enough on its own. Run the
+`GRANT SELECT ON ALL SEQUENCES IN SCHEMA ...` and matching `ALTER DEFAULT
+PRIVILEGES ... GRANT SELECT ON SEQUENCES` lines from the [Security](#security)
+section for the schema the error names.
+
+### `pg_dump version (X) does not match the server version (Y)`
+
+Supabase upgrades its Postgres version over time; your local `pg_dump` needs to be
+the same major version to guarantee a clean dump/restore. Install the matching
+client tools for your OS (see [Installation](#installation)), pointing at the major
+version the error message reports for the server. If you understand the risk and
+want to proceed anyway (minor mismatches are often fine), re-run with
+`--no-version-check`.
 
 ## How backups are structured
 

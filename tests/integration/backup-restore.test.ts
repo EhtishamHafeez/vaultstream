@@ -12,8 +12,12 @@ const SEED_FILE = path.join(REPO_ROOT, "tests", "integration", "fixtures", "seed
 
 const SOURCE_URL = "postgresql://postgres:postgres@localhost:55432/postgres";
 const TARGET_URL = "postgresql://postgres:postgres@localhost:55433/postgres";
+// The role vaultstream would actually use against a real Supabase project —
+// granted only on public/auth/storage (see fixtures/seed.sql), NOT realtime.
+const RESTRICTED_ROLE_URL = "postgresql://vaultstream_backup_test:test_password_only@localhost:55432/postgres";
 
-const TABLES = ["customers", "orders", "notes"] as const;
+const DEFAULT_SCHEMAS = ["public", "auth", "storage"];
+const TABLES = ["customers", "orders", "notes", "auth.users", "storage.objects"] as const;
 
 async function waitForPostgres(url: string, timeoutMs = 60_000): Promise<void> {
   const start = Date.now();
@@ -45,12 +49,15 @@ async function getRowCounts(url: string): Promise<Record<string, number>> {
   return counts;
 }
 
-async function getTableCount(url: string): Promise<number> {
-  const count = await runSql(
-    url,
-    "SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema')"
-  );
+async function getTableCount(url: string, schemas: readonly string[] = DEFAULT_SCHEMAS): Promise<number> {
+  const schemaList = schemas.map((s) => `'${s}'`).join(",");
+  const count = await runSql(url, `SELECT count(*) FROM information_schema.tables WHERE table_schema IN (${schemaList})`);
   return parseInt(count, 10);
+}
+
+async function schemaExists(url: string, schema: string): Promise<boolean> {
+  const count = await runSql(url, `SELECT count(*) FROM information_schema.schemata WHERE schema_name = '${schema}'`);
+  return parseInt(count, 10) > 0;
 }
 
 describe("backup -> restore round trip (requires Docker)", () => {
@@ -75,6 +82,11 @@ describe("backup -> restore round trip (requires Docker)", () => {
     expect(sourceCounts.customers).toBe(3);
     expect(sourceCounts.orders).toBe(4);
     expect(sourceCounts.notes).toBe(5);
+    expect(sourceCounts["auth.users"]).toBe(2);
+    expect(sourceCounts["storage.objects"]).toBe(3);
+    // customers, orders, notes, auth.users, storage.objects — never realtime.messages,
+    // which isn't in the default schema list.
+    expect(sourceTableCount).toBe(5);
 
     const backupResult = await execa(
       "node",
@@ -98,6 +110,63 @@ describe("backup -> restore round trip (requires Docker)", () => {
 
     expect(targetCounts).toEqual(sourceCounts);
     expect(targetTableCount).toBe(sourceTableCount);
+  });
+
+  it("a restricted read-only role backs up public/auth/storage without touching realtime", async () => {
+    // This is the regression test for the real bug: pg_dump used to dump the
+    // whole database and fail with "permission denied for schema realtime"
+    // because the read-only role has no grant there. Scoping to explicit
+    // schemas (the default here) means it's never even requested.
+    const restrictedTmpDir = await mkdtemp(path.join(os.tmpdir(), "vaultstream-integration-restricted-"));
+
+    try {
+      const backupResult = await execa(
+        "node",
+        [CLI_PATH, "backup", "--db-only", "--dest", restrictedTmpDir, "--json"],
+        { env: { ...process.env, SUPABASE_DB_URL: RESTRICTED_ROLE_URL } }
+      );
+      expect(backupResult.exitCode).toBe(0);
+      const backupJson = JSON.parse(backupResult.stdout) as { ok: boolean; database?: { tableCount: number } };
+      expect(backupJson.ok).toBe(true);
+      expect(backupJson.database?.tableCount).toBe(5);
+
+      const restoreResult = await execa(
+        "node",
+        [CLI_PATH, "restore", "latest", "--target", TARGET_URL, "--yes", "--dest", restrictedTmpDir, "--json"],
+        { env: { ...process.env, SUPABASE_DB_URL: RESTRICTED_ROLE_URL } }
+      );
+      expect(restoreResult.exitCode).toBe(0);
+
+      expect(await getTableCount(TARGET_URL)).toBe(5);
+      expect(await schemaExists(TARGET_URL, "realtime")).toBe(false);
+    } finally {
+      await rm(restrictedTmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("surfaces pg_dump's real permission error when --schemas includes one the role can't read", async () => {
+    const failTmpDir = await mkdtemp(path.join(os.tmpdir(), "vaultstream-integration-permfail-"));
+
+    try {
+      const result = await execa(
+        "node",
+        [
+          CLI_PATH,
+          "backup",
+          "--db-only",
+          "--dest",
+          failTmpDir,
+          "--schemas",
+          "public,auth,storage,realtime",
+          "--json",
+        ],
+        { env: { ...process.env, SUPABASE_DB_URL: RESTRICTED_ROLE_URL }, reject: false }
+      );
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toMatch(/permission denied/i);
+    } finally {
+      await rm(failTmpDir, { recursive: true, force: true });
+    }
   });
 
   it("refuses to restore onto the source URL without --force", async () => {

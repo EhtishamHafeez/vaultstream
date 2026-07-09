@@ -48,9 +48,9 @@ export async function assertVersionCompatibility(dbUrl: string, skip: boolean): 
   }
 }
 
-export async function getTableCount(dbUrl: string): Promise<number> {
-  const query =
-    "SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema')";
+export async function getTableCount(dbUrl: string, schemas: string[]): Promise<number> {
+  const schemaList = schemas.map((s) => `'${s.replace(/'/g, "''")}'`).join(",");
+  const query = `SELECT count(*) FROM information_schema.tables WHERE table_schema IN (${schemaList})`;
   const result = await execa("psql", [dbUrl, "-tAc", query], { reject: false });
   if (result.failed) {
     throw new VaultstreamError(
@@ -70,15 +70,25 @@ export interface PgDumpHandle {
   cancel: () => void;
 }
 
-export function runPgDump(dbUrl: string): PgDumpHandle {
-  const child = execa("pg_dump", [dbUrl, "--format=custom", "--no-owner", "--no-privileges"], {
-    stdout: "pipe",
-    stderr: "pipe",
-    reject: false,
-    // Never buffer stdout in memory — that's the multi-GB dump. stderr is
-    // small (just error text) so it's fine to keep for error messages.
-    buffer: { stdout: false, stderr: true },
-  });
+export function runPgDump(dbUrl: string, schemas: string[]): PgDumpHandle {
+  // Explicit -n per schema — never dump the whole database. Supabase's
+  // internal schemas (e.g. "realtime", with its daily partition tables)
+  // aren't SELECT-able by the read-only backup role and aren't user data
+  // anyway, so an unscoped pg_dump fails with "permission denied for schema".
+  const schemaFlags = schemas.flatMap((schema) => ["-n", schema]);
+
+  const child = execa(
+    "pg_dump",
+    [dbUrl, "--format=custom", "--no-owner", "--no-privileges", ...schemaFlags],
+    {
+      stdout: "pipe",
+      stderr: "pipe",
+      reject: false,
+      // Never buffer stdout in memory — that's the multi-GB dump. stderr is
+      // small (just error text) so it's fine to keep for error messages.
+      buffer: { stdout: false, stderr: true },
+    }
+  );
 
   const stream = child.stdout as unknown as Readable;
 
