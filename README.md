@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/vaultstream.svg)](https://www.npmjs.com/package/vaultstream)
 [![CI](https://github.com/vaultstream/vaultstream/actions/workflows/ci.yml/badge.svg)](https://github.com/vaultstream/vaultstream/actions/workflows/ci.yml)
-[![license](https://img.shields.io/npm/l/vaultstream.svg)](./LICENSE)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
 **Back up your entire Supabase project — database AND storage files — to storage you control.**
 
