@@ -285,8 +285,6 @@ npm run lint
 npm run typecheck
 ```
 
-See [DEMO.md](./DEMO.md) for the exact commands used to record the terminal demo.
-
 ## Roadmap
 
 The CLI is the whole product today, and it's **MIT-licensed and will stay free
