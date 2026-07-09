@@ -1,0 +1,65 @@
+{
+  "name": "vaultstream",
+  "version": "0.1.0",
+  "description": "Back up your entire Supabase project — database AND storage files — to storage you control.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Vaultstream",
+  "homepage": "https://github.com/vaultstream/vaultstream#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vaultstream/vaultstream.git"
+  },
+  "bugs": {
+    "url": "https://github.com/vaultstream/vaultstream/issues"
+  },
+  "keywords": [
+    "supabase",
+    "backup",
+    "postgres",
+    "pg_dump",
+    "storage",
+    "s3",
+    "cli",
+    "disaster-recovery"
+  ],
+  "bin": {
+    "vaultstream": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsx src/cli.ts",
+    "lint": "eslint src tests",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run tests/unit",
+    "test:watch": "vitest tests/unit",
+    "test:integration": "vitest run tests/integration --config vitest.integration.config.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.658.0",
+    "@aws-sdk/lib-storage": "^3.658.0",
+    "@clack/prompts": "^0.7.0",
+    "@supabase/supabase-js": "^2.45.4",
+    "commander": "^12.1.0",
+    "execa": "^9.4.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.11.1",
+    "@types/node": "^20.16.10",
+    "eslint": "^9.11.1",
+    "tsup": "^8.3.0",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2",
+    "typescript-eslint": "^8.8.0",
+    "vitest": "^2.1.1"
+  }
+}
