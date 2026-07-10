@@ -23,6 +23,8 @@ export interface VaultstreamFileConfig {
   encryption?: { enabled: boolean };
   /** Schemas to pass to pg_dump via -n. Defaults to DEFAULT_SCHEMAS. */
   schemas?: string[];
+  /** "schema.table" entries to pass to pg_dump via -T. Defaults to DEFAULT_EXCLUDE_TABLES. */
+  excludeTables?: string[];
 }
 
 /**
@@ -32,6 +34,20 @@ export interface VaultstreamFileConfig {
  * these three.
  */
 export const DEFAULT_SCHEMAS = ["public", "auth", "storage"];
+
+/**
+ * Even within a granted schema, a handful of tables are the storage
+ * extension's own internal bookkeeping (schema-version tracking, in-progress
+ * multipart upload state) rather than your data — and on some Supabase
+ * projects the read-only role can't be granted SELECT on them regardless of
+ * schema-level access, the same way "realtime" can't be granted at all.
+ * Excluded by default since there's nothing worth backing up in them anyway.
+ */
+export const DEFAULT_EXCLUDE_TABLES = [
+  "storage.migrations",
+  "storage.s3_multipart_uploads",
+  "storage.s3_multipart_uploads_parts",
+];
 
 export const CONFIG_FILENAME = "vaultstream.json";
 
@@ -80,12 +96,14 @@ export interface ResolvedConfig {
   encryptionKey?: Buffer;
   storageEnabled: boolean;
   schemas: string[];
+  excludeTables: string[];
 }
 
 export interface ResolveConfigOptions {
   fileConfig: VaultstreamFileConfig | null;
   destFlag?: string;
   schemasFlag?: string;
+  excludeTablesFlag?: string;
   env?: NodeJS.ProcessEnv;
 }
 
@@ -94,12 +112,22 @@ export interface ResolveConfigOptions {
  * into a single resolved config. A config file is never required — every
  * command must work from env vars + flags alone for CI/cron use.
  */
-export function resolveConfig({ fileConfig, destFlag, schemasFlag, env = process.env }: ResolveConfigOptions): ResolvedConfig {
+export function resolveConfig({
+  fileConfig,
+  destFlag,
+  schemasFlag,
+  excludeTablesFlag,
+  env = process.env,
+}: ResolveConfigOptions): ResolvedConfig {
   const destination = resolveDestination({ fileConfig, destFlag, env });
 
   const schemas = schemasFlag
     ? schemasFlag.split(",").map((s) => s.trim()).filter(Boolean)
     : (fileConfig?.schemas?.length ? fileConfig.schemas : DEFAULT_SCHEMAS);
+
+  const excludeTables = excludeTablesFlag
+    ? excludeTablesFlag.split(",").map((s) => s.trim()).filter(Boolean)
+    : (fileConfig?.excludeTables?.length ? fileConfig.excludeTables : DEFAULT_EXCLUDE_TABLES);
 
   const encryptionKeyHex = env.VAULTSTREAM_ENCRYPTION_KEY;
   let encryptionKey: Buffer | undefined;
@@ -122,6 +150,7 @@ export function resolveConfig({ fileConfig, destFlag, schemasFlag, env = process
     encryptionKey,
     storageEnabled: fileConfig?.storage?.enabled ?? Boolean(env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY),
     schemas,
+    excludeTables,
   };
 }
 

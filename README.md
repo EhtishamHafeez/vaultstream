@@ -84,6 +84,7 @@ vaultstream backup --storage-only       # skip the database
 vaultstream backup --dest ./backups     # override the destination for this run
 vaultstream backup --dest s3            # use the S3-compatible destination from env vars
 vaultstream backup --schemas public,auth,storage,custom_schema  # override which schemas pg_dump covers
+vaultstream backup --exclude-tables storage.migrations,public.debug_logs  # override which tables pg_dump skips
 vaultstream backup --dry-run            # show what would happen, write nothing
 vaultstream backup --json               # machine-readable output for scripts/monitoring
 ```
@@ -134,13 +135,25 @@ count, storage file count — newest first.
   "destination": { "type": "local", "path": "./vaultstream-backups" },
   "storage": { "enabled": true },
   "encryption": { "enabled": true },
-  "schemas": ["public", "auth", "storage"]
+  "schemas": ["public", "auth", "storage"],
+  "excludeTables": [
+    "storage.migrations",
+    "storage.s3_multipart_uploads",
+    "storage.s3_multipart_uploads_parts"
+  ]
 }
 ```
 
 `schemas` controls which schemas `pg_dump` covers (`-n <schema>` per entry) and
 defaults to `["public", "auth", "storage"]` if omitted. The `--schemas` flag
 overrides both the config file and the default for a single run.
+
+`excludeTables` controls which individual tables `pg_dump` skips (`-T <schema.table>`
+per entry) even within a dumped schema, and defaults to the three tables shown above
+if omitted — they're the storage extension's own internal bookkeeping (schema-version
+tracking, in-progress multipart upload state), not your data, and on some projects
+aren't grantable to a restricted role at all. The `--exclude-tables` flag overrides
+both the config file and the default for a single run.
 
 Everything else comes from environment variables, so every command also works with
 **no config file at all** — just env vars — for CI and cron use:
@@ -315,6 +328,68 @@ possible fixes:
 `GRANT SELECT ON ALL SEQUENCES IN SCHEMA ...` and matching `ALTER DEFAULT
 PRIVILEGES ... GRANT SELECT ON SEQUENCES` lines from the [Security](#security)
 section for the schema the error names.
+
+### `permission denied for table migrations` (or `s3_multipart_uploads`, etc.)
+
+Two different causes, same symptom:
+
+- **Most likely: your blanket `GRANT SELECT ON ALL TABLES IN SCHEMA storage` ran
+  before Supabase added this table to your project.** `GRANT ... ALL TABLES` is a
+  snapshot at the moment you run it — it doesn't retroactively cover tables
+  Supabase's own migrations add later. Re-run it now to pick up everything current:
+  ```sql
+  GRANT SELECT ON ALL TABLES IN SCHEMA storage TO vaultstream_backup;
+  GRANT SELECT ON ALL SEQUENCES IN SCHEMA storage TO vaultstream_backup;
+  ```
+  You may need to do this again in the future if Supabase adds more tables.
+- **If re-granting doesn't help**, the table is likely extension-internal
+  bookkeeping that isn't grantable at all on your project (the same class of
+  restriction as `auth`, just at a single-table level instead of a whole schema).
+  `vaultstream` already excludes the three tables known to hit this
+  (`storage.migrations`, `storage.s3_multipart_uploads`,
+  `storage.s3_multipart_uploads_parts`) via `excludeTables` by default — none of
+  them hold data worth backing up anyway. If a *different* table hits this, add it:
+  ```bash
+  vaultstream backup --exclude-tables storage.migrations,storage.s3_multipart_uploads,storage.s3_multipart_uploads_parts,storage.the_new_one
+  ```
+  or add it to `vaultstream.json`'s `excludeTables` array so you don't have to pass
+  the flag every time.
+
+### `GRANT USAGE ON SCHEMA auth` "succeeds" but `auth` still fails / never appears in `nspacl`
+
+On hosted Supabase projects, the `auth` schema is owned by Supabase's internal
+`supabase_admin` role — which customers cannot assume, not even via `postgres`
+(despite Supabase's dashboard labeling `postgres` as "Superuser"). You can confirm
+this yourself:
+
+```sql
+-- Check the raw ACL — your role won't be in this list even after a
+-- "successful" GRANT, if you're hitting this platform restriction.
+SELECT nspacl FROM pg_namespace WHERE nspname = 'auth';
+
+-- Confirm postgres has no path to supabase_admin's authority.
+SELECT r.rolname FROM pg_auth_members m
+  JOIN pg_roles r ON r.oid = m.roleid
+  JOIN pg_roles u ON u.oid = m.member
+  WHERE u.rolname = 'postgres';
+```
+
+If `auth`'s ACL never includes your role no matter how many times you `GRANT`, and
+`postgres` isn't a member of `supabase_admin`, this is a platform-level restriction,
+not a mistake in your SQL. There's no self-service SQL workaround. Practically:
+
+- Drop `auth` from `schemas` and back up `public` + `storage` only:
+  ```json
+  { "schemas": ["public", "storage"] }
+  ```
+- If you specifically need `auth.users` data, contact Supabase support and ask them
+  to grant your role access, or export it separately via the Auth Admin API
+  (`GET /auth/v1/admin/users`, authenticated with the service role key) —
+  `vaultstream` doesn't do this automatically today.
+
+This doesn't affect everyone — it depends on your project's specific ACL setup — so
+`auth` stays in the default `schemas` list. If your project *can* grant `auth`
+access, nothing above applies to you.
 
 ### `pg_dump version (X) does not match the server version (Y)`
 

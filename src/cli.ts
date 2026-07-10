@@ -32,6 +32,12 @@ program
     'Comma-separated schemas to dump (default: "public,auth,storage"). ' +
       "Supabase's internal schemas (e.g. realtime) aren't readable by the backup role and are excluded by default."
   )
+  .option(
+    "--exclude-tables <list>",
+    'Comma-separated "schema.table" entries to skip within a dumped schema ' +
+      '(default: "storage.migrations,storage.s3_multipart_uploads,storage.s3_multipart_uploads_parts"). ' +
+      "These are the storage extension's own internal bookkeeping, not your data, and aren't always grantable."
+  )
   .option("--dry-run", "Show what would happen without writing or uploading anything")
   .option("--json", "Print machine-readable JSON output instead of pretty text")
   .option("--no-version-check", "Skip the pg_dump/server version compatibility check")
@@ -42,6 +48,7 @@ program
         storageOnly: options.storageOnly,
         dest: options.dest,
         schemas: options.schemas,
+        excludeTables: options.excludeTables,
         dryRun: options.dryRun,
         json: options.json,
         noVersionCheck: options.versionCheck === false,
@@ -77,6 +84,7 @@ interface BackupCliOptions {
   storageOnly?: boolean;
   dest?: string;
   schemas?: string;
+  excludeTables?: string;
   dryRun?: boolean;
   json?: boolean;
   versionCheck?: boolean;

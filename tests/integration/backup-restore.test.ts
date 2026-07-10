@@ -17,6 +17,11 @@ const TARGET_URL = "postgresql://postgres:postgres@localhost:55433/postgres";
 const RESTRICTED_ROLE_URL = "postgresql://vaultstream_backup_test:test_password_only@localhost:55432/postgres";
 
 const DEFAULT_SCHEMAS = ["public", "auth", "storage"];
+const DEFAULT_EXCLUDE_TABLES = [
+  "storage.migrations",
+  "storage.s3_multipart_uploads",
+  "storage.s3_multipart_uploads_parts",
+];
 const TABLES = ["customers", "orders", "notes", "auth.users", "storage.objects"] as const;
 
 async function waitForPostgres(url: string, timeoutMs = 60_000): Promise<void> {
@@ -49,14 +54,35 @@ async function getRowCounts(url: string): Promise<Record<string, number>> {
   return counts;
 }
 
-async function getTableCount(url: string, schemas: readonly string[] = DEFAULT_SCHEMAS): Promise<number> {
+async function getTableCount(
+  url: string,
+  schemas: readonly string[] = DEFAULT_SCHEMAS,
+  excludeTables: readonly string[] = DEFAULT_EXCLUDE_TABLES
+): Promise<number> {
   const schemaList = schemas.map((s) => `'${s}'`).join(",");
-  const count = await runSql(url, `SELECT count(*) FROM information_schema.tables WHERE table_schema IN (${schemaList})`);
+  const excludeList = excludeTables
+    .map((t) => {
+      const [schema, table] = t.split(".");
+      return `('${schema}','${table}')`;
+    })
+    .join(",");
+  const query =
+    `SELECT count(*) FROM information_schema.tables WHERE table_schema IN (${schemaList})` +
+    (excludeList ? ` AND (table_schema, table_name) NOT IN (${excludeList})` : "");
+  const count = await runSql(url, query);
   return parseInt(count, 10);
 }
 
 async function schemaExists(url: string, schema: string): Promise<boolean> {
   const count = await runSql(url, `SELECT count(*) FROM information_schema.schemata WHERE schema_name = '${schema}'`);
+  return parseInt(count, 10) > 0;
+}
+
+async function tableExists(url: string, schema: string, table: string): Promise<boolean> {
+  const count = await runSql(
+    url,
+    `SELECT count(*) FROM information_schema.tables WHERE table_schema = '${schema}' AND table_name = '${table}'`
+  );
   return parseInt(count, 10) > 0;
 }
 
@@ -139,6 +165,10 @@ describe("backup -> restore round trip (requires Docker)", () => {
 
       expect(await getTableCount(TARGET_URL)).toBe(5);
       expect(await schemaExists(TARGET_URL, "realtime")).toBe(false);
+      // storage.migrations exists in the source (see fixtures/seed.sql) and the
+      // restricted role has no SELECT on it — proving the default excludeTables
+      // let the backup succeed anyway, and that it was never restored.
+      expect(await tableExists(TARGET_URL, "storage", "migrations")).toBe(false);
     } finally {
       await rm(restrictedTmpDir, { recursive: true, force: true });
     }

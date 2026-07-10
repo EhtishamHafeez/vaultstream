@@ -55,6 +55,15 @@ INSERT INTO storage.objects (bucket, name) VALUES
   ('avatars', 'grace.png'),
   ('uploads', 'invoice.pdf');
 
+-- Stand-in for the real storage.migrations table, which on some Supabase
+-- projects the read-only role can't be granted SELECT on even with schema
+-- USAGE — this is what vaultstream's default excludeTables skips.
+CREATE TABLE storage.migrations (
+  id serial PRIMARY KEY,
+  name text NOT NULL
+);
+INSERT INTO storage.migrations (name) VALUES ('0001_init'), ('0002_add_buckets');
+
 -- Stand-in for Supabase's internal "realtime" schema — this is exactly what
 -- produced "permission denied for schema realtime" when pg_dump wasn't
 -- scoped to explicit schemas. The restricted role below is deliberately NOT
@@ -82,5 +91,9 @@ GRANT SELECT ON ALL SEQUENCES IN SCHEMA auth TO vaultstream_backup_test;
 GRANT USAGE ON SCHEMA storage TO vaultstream_backup_test;
 GRANT SELECT ON ALL TABLES IN SCHEMA storage TO vaultstream_backup_test;
 GRANT SELECT ON ALL SEQUENCES IN SCHEMA storage TO vaultstream_backup_test;
+
+-- ...except storage.migrations, simulating the real-world case where a table
+-- inside a granted schema still isn't SELECT-able by the restricted role.
+REVOKE SELECT ON storage.migrations FROM vaultstream_backup_test;
 
 -- Deliberately no grant on "realtime".

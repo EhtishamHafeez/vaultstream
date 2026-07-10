@@ -48,9 +48,17 @@ export async function assertVersionCompatibility(dbUrl: string, skip: boolean): 
   }
 }
 
-export async function getTableCount(dbUrl: string, schemas: string[]): Promise<number> {
+export async function getTableCount(dbUrl: string, schemas: string[], excludeTables: string[] = []): Promise<number> {
   const schemaList = schemas.map((s) => `'${s.replace(/'/g, "''")}'`).join(",");
-  const query = `SELECT count(*) FROM information_schema.tables WHERE table_schema IN (${schemaList})`;
+  const excludeList = excludeTables
+    .map((t) => {
+      const [schema, table] = t.split(".");
+      return `('${(schema ?? "").replace(/'/g, "''")}', '${(table ?? "").replace(/'/g, "''")}')`;
+    })
+    .join(",");
+  const query =
+    `SELECT count(*) FROM information_schema.tables WHERE table_schema IN (${schemaList})` +
+    (excludeList ? ` AND (table_schema, table_name) NOT IN (${excludeList})` : "");
   const result = await execa("psql", [dbUrl, "-tAc", query], { reject: false });
   if (result.failed) {
     throw new VaultstreamError(
@@ -70,16 +78,22 @@ export interface PgDumpHandle {
   cancel: () => void;
 }
 
-export function runPgDump(dbUrl: string, schemas: string[]): PgDumpHandle {
+export function runPgDump(dbUrl: string, schemas: string[], excludeTables: string[] = []): PgDumpHandle {
   // Explicit -n per schema — never dump the whole database. Supabase's
   // internal schemas (e.g. "realtime", with its daily partition tables)
   // aren't SELECT-able by the read-only backup role and aren't user data
   // anyway, so an unscoped pg_dump fails with "permission denied for schema".
   const schemaFlags = schemas.flatMap((schema) => ["-n", schema]);
 
+  // Explicit -T per excluded table — even within a granted schema, a few
+  // tables are the extension's own internal bookkeeping (not user data) and
+  // on some projects aren't grantable to a restricted role at all, the same
+  // way "realtime" isn't grantable at the schema level.
+  const excludeTableFlags = excludeTables.flatMap((table) => ["-T", table]);
+
   const child = execa(
     "pg_dump",
-    [dbUrl, "--format=custom", "--no-owner", "--no-privileges", ...schemaFlags],
+    [dbUrl, "--format=custom", "--no-owner", "--no-privileges", ...schemaFlags, ...excludeTableFlags],
     {
       stdout: "pipe",
       stderr: "pipe",

@@ -25,6 +25,7 @@ export interface BackupCommandOptions {
   storageOnly?: boolean;
   dest?: string;
   schemas?: string;
+  excludeTables?: string;
   dryRun?: boolean;
   json?: boolean;
   noVersionCheck?: boolean;
@@ -39,7 +40,12 @@ export async function backupCommand(opts: BackupCommandOptions): Promise<void> {
   }
 
   const fileConfig = await loadFileConfig(process.cwd());
-  const config = resolveConfig({ fileConfig, destFlag: opts.dest, schemasFlag: opts.schemas });
+  const config = resolveConfig({
+    fileConfig,
+    destFlag: opts.dest,
+    schemasFlag: opts.schemas,
+    excludeTablesFlag: opts.excludeTables,
+  });
   const destination = createDestinationDriver(config.destination);
 
   const doDb = !opts.storageOnly;
@@ -74,6 +80,7 @@ export async function backupCommand(opts: BackupCommandOptions): Promise<void> {
       databaseEntry = await runDatabaseBackupStep({
         dbUrl: config.dbUrl,
         schemas: config.schemas,
+        excludeTables: config.excludeTables,
         destination,
         timestamp,
         encryptionKey: config.encryptionKey,
@@ -137,6 +144,7 @@ export async function backupCommand(opts: BackupCommandOptions): Promise<void> {
 interface DatabaseStepParams {
   dbUrl: string;
   schemas: string[];
+  excludeTables: string[];
   destination: DestinationDriver;
   timestamp: string;
   encryptionKey: Buffer | undefined;
@@ -147,12 +155,13 @@ interface DatabaseStepParams {
 }
 
 async function runDatabaseBackupStep(params: DatabaseStepParams): Promise<DatabaseManifestEntry> {
-  const { dbUrl, schemas, destination, timestamp, encryptionKey, dryRun, skipVersionCheck, logger, signal } = params;
+  const { dbUrl, schemas, excludeTables, destination, timestamp, encryptionKey, dryRun, skipVersionCheck, logger, signal } =
+    params;
 
   await checkBinaryAvailable("pg_dump");
   await assertVersionCompatibility(dbUrl, skipVersionCheck);
 
-  const tableCountPromise = getTableCount(dbUrl, schemas);
+  const tableCountPromise = getTableCount(dbUrl, schemas, excludeTables);
   const key = `db/backup-${timestamp}.dump.gz${encryptionKey ? ".enc" : ""}`;
 
   if (dryRun) {
@@ -162,7 +171,7 @@ async function runDatabaseBackupStep(params: DatabaseStepParams): Promise<Databa
   }
 
   const dumpStart = Date.now();
-  const { stream: dumpStream, done: dumpDone, cancel } = runPgDump(dbUrl, schemas);
+  const { stream: dumpStream, done: dumpDone, cancel } = runPgDump(dbUrl, schemas, excludeTables);
 
   const gzip = zlib.createGzip();
   const hasher = new HashPassThrough();

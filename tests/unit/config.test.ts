@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_SCHEMAS, resolveConfig } from "../../src/lib/config.js";
+import { DEFAULT_EXCLUDE_TABLES, DEFAULT_SCHEMAS, resolveConfig } from "../../src/lib/config.js";
 import { ConfigError } from "../../src/lib/errors.js";
 
 describe("resolveConfig", () => {
@@ -113,5 +113,40 @@ describe("resolveConfig", () => {
       env: {},
     });
     expect(config.schemas).toEqual(["public", "auth", "storage"]);
+  });
+
+  it("defaults excludeTables to the known storage-internal tables when nothing overrides it", () => {
+    const config = resolveConfig({ fileConfig: null, destFlag: "./backups", env: {} });
+    expect(config.excludeTables).toEqual(DEFAULT_EXCLUDE_TABLES);
+    expect(config.excludeTables).toEqual([
+      "storage.migrations",
+      "storage.s3_multipart_uploads",
+      "storage.s3_multipart_uploads_parts",
+    ]);
+  });
+
+  it("uses excludeTables from vaultstream.json when present", () => {
+    const config = resolveConfig({
+      fileConfig: {
+        destination: { type: "local", path: "./backups" },
+        excludeTables: ["public.debug_logs"],
+      },
+      env: {},
+    });
+    expect(config.excludeTables).toEqual(["public.debug_logs"]);
+  });
+
+  it("--exclude-tables flag overrides both the config file and the default", () => {
+    const config = resolveConfig({
+      fileConfig: { destination: { type: "local", path: "./backups" }, excludeTables: ["public.debug_logs"] },
+      excludeTablesFlag: "storage.migrations, public.scratch",
+      env: {},
+    });
+    expect(config.excludeTables).toEqual(["storage.migrations", "public.scratch"]);
+  });
+
+  it("--exclude-tables='' (empty string) still falls back to the default rather than dumping everything", () => {
+    const config = resolveConfig({ fileConfig: null, destFlag: "./backups", excludeTablesFlag: "", env: {} });
+    expect(config.excludeTables).toEqual(DEFAULT_EXCLUDE_TABLES);
   });
 });
